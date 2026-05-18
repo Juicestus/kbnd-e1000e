@@ -2,12 +2,14 @@ CC      := gcc
 CFLAGS  := -Wall -Wextra -O2 -g -static
 LDFLAGS :=
 
-BUILD_DIR := build
-SRC_DIR   := src
+BUILD_DIR   := build
+SRC_DIR     := src
+SCRIPTS_DIR := scripts
 
 BIN       := kbnd
 TARGET    := $(BUILD_DIR)/$(BIN)
 SOURCES   := $(wildcard $(SRC_DIR)/*.c)
+SCRIPTS   := $(wildcard $(SCRIPTS_DIR)/*.sh)
 
 GUEST_DIR := /home/kbnd/kbnd
 SSH_HOST  := kbnd-vm
@@ -26,11 +28,12 @@ $(BUILD_DIR):
 ship: $(TARGET)
 	@ssh $(SSH_HOST) "mkdir -p $(GUEST_DIR)"
 	@scp -q $(TARGET) $(SSH_HOST):$(GUEST_DIR)/
+	@scp -q $(SCRIPTS) $(SSH_HOST):$(GUEST_DIR)/
 	@echo "Shipped $(TARGET) to $(SSH_HOST):$(GUEST_DIR)/"
 
 run: ship
 	@echo "Running $(BIN) on guest:\n\n\n"
-	@ssh $(SSH_HOST) "$(GUEST_DIR)/$(BIN)"
+	@ssh -t $(SSH_HOST) "sudo $(GUEST_DIR)/$(BIN)"
 
 clean:
 	rm -rf $(BUILD_DIR)
