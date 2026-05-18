@@ -1,12 +1,8 @@
 Kernel Bypass Network Driver (KBND) for the Intel e1000e family. 
 
+Ubuntu image for QEMU: https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso
 
-Install guest Ubuntu ISO
+Build and run on guest using: make run
 
-    cd vm
-    wget https://releases.ubuntu.com/24.04/ubuntu-24.04.4-live-server-amd64.iso
-
-
-
-
+By Justus Languell <jus@justusl.com>
 
