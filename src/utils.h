@@ -1,6 +1,13 @@
 #ifndef KBND_UTILS_H_
 #define KBND_UTILS_H_
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+
+#include <time.h>
 
 /**
  * Handy macros
@@ -17,5 +24,10 @@
     #define NULL ((void *)0)
     typedef unsigned long long size_t;
 #endif
+
+/**
+ * usleep that wraps nanosleep
+ */
+void usleep2(uint64_t us);
 
 #endif

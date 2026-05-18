@@ -4,11 +4,6 @@
  * Justus Languell  <jus@justusl.com>
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -17,12 +12,39 @@
 #include "utils.h"
 
 /**
+ * Internal driver errors
+ */
+enum
+{
+    ERR_OK = 0,
+    ERR_DEV_RST_TIMEOUT,
+
+    __NUM_ERRORS      /* ALWAYS LAST */
+};
+
+static inline const char* error_str(int err)
+{
+    static const char* ERROR_STRS[__NUM_ERRORS] =
+    {
+        [ERR_OK] = "OK",
+        [ERR_DEV_RST_TIMEOUT] = "Device Reset Timeout",
+    };
+
+    if (err < 0 || err >= __NUM_ERRORS)
+        return "Unknown Error";
+    return ERROR_STRS[err];
+}
+
+
+/**
  * PCI device information
  *
  * lpsci -vvv
  */
 #define PCI_ADDR    "0000:00:03.0"
 #define BAR0_SIZE   (128 * 1024)        // 128k
+
+
 
 /**
  * Registers    10.2.1
@@ -34,6 +56,8 @@
 #define REG_CTRL_EXT    0x00018     // RW
 #define REG_RAL0        0x05400     // RW   Low half
 #define REG_RAH0        0x05404     // RW   High half
+#define REG_IMC         0x000D8     // W    Interrupt Mask Clear
+#define REG_ICR         0x000C0     // RW   Interrupt Cause Read
 
 /**
  * Status bits          10.2.2.2
@@ -63,8 +87,7 @@
 #define CTRL_TFCE           (1u << 28)      // TX Flow Control Enable
 #define CTRL_PHY_RST        (1u << 31)      // PHY Reset
 
-#define CHECK_FLAG(REG, MASK)       (((REG) & (MASK)) != 0)
-#define SEE_FLAG(REG, MASK, T, F)   (CHECK_FLAG((REG), (MASK)) ? (T) : (F))
+#define SEE_FLAG(REG, MASK, T, F)   ((((REG) & (MASK)) != 0) ? (T) : (F))
 
 /**
  * Safely read a register
@@ -105,7 +128,11 @@ static inline void mac_addr_str(char* mac_str, size_t str_size, uint64_t mac_add
         (uint)((mac_addr >> 0x28)  & 0xff));
 }
 
-int print_dev_status(void* bar0)
+
+/**
+ * Print device status info
+ */
+static int print_dev_status(volatile void* bar0)
 {
     /**
      * Read core registers
@@ -116,9 +143,15 @@ int print_dev_status(void* bar0)
     uint32_t ral        = read32(bar0, REG_RAL0);
     uint32_t rah        = read32(bar0, REG_RAH0);
 
+    /**
+     * Fmt mac addr
+     */
     char mac_addr[256];
     mac_addr_str(mac_addr, sizeof(mac_addr), MAC_ADDR(ral, rah));
 
+    /**
+     * Print relevant device info
+     */
     printf(
         "Registers\n"
         "\tCTRL:      0x%08x\n"
@@ -145,19 +178,64 @@ int print_dev_status(void* bar0)
 
         mac_addr);
 
-    return 0;
+    return ERR_OK;
 }
 
+/**
+ * Reset the device
+ */
+static int dev_reset(volatile void* bar0)
+{
+    /**
+     * Mask interrupts
+     */
+    write32(bar0, REG_IMC, UINT32_MAX);
+    (void)read32(bar0, REG_ICR);
 
+    /**
+     * RST
+     */
+    write32(bar0, REG_CTRL, (read32(bar0, REG_CTRL) | CTRL_RST));
 
+    /**
+     * Wait for dev to come back on
+     *
+     * Poll every 100us
+     * Timeout after 100*100us = 10ms
+     */
+    for (uint i = 0; i < 100; i++)
+    {
+        if ((read32(bar0, REG_CTRL) & CTRL_RST) == 0)
+            break;
+        usleep2(100);
+    }
 
+    /**
+     * Failed
+     */
+    if (read32(bar0, REG_CTRL) & CTRL_RST)
+    {
+        return ERR_DEV_RST_TIMEOUT;
+    }
 
+    /**
+     * OK
+     */
+    write32(bar0, REG_IMC, UINT32_MAX);
+    (void)read32(bar0, REG_ICR);
+    usleep2(1000);
+    return ERR_OK;
+}
+
+/**
+ * Just some tests right now
+ */
 int main(int argc, char** argv)
 {
     UNUSED(argc);
     UNUSED(argv);
 
-    int status = 0;
+    int rcode = 0;
 
     char path[256];
     int fd = -1;
@@ -170,7 +248,7 @@ int main(int argc, char** argv)
     if ((fd = open(path, O_RDWR)) < 0)
     {
         fprintf(stderr, "Failed to open %s with %s (%d)\n", path, strerror(errno), errno);
-        status = 1; goto _err;
+        rcode = 1; goto _err;
     }
     printf("Opened %s OK %d\n", path, fd);
 
@@ -181,15 +259,29 @@ int main(int argc, char** argv)
     if ((bar0 = mmap(NULL, BAR0_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0)) == MAP_FAILED)
     {
         fprintf(stderr, "Failed to map bar0 with %s (%d)\n", strerror(errno), errno);
-        status = 1; goto _err;
+        rcode = 1; goto _err;
     }
     printf("Mapped bar0 at %p\n", bar0);
 
+
+
     /**
-     *
+     * Reset device
+     */
+    printf("Reseting device... ");
+    int err;
+    if ((err = dev_reset(bar0)) != ERR_OK)
+    {
+        fprintf(stderr, "Failed to reset device with %s (%d)\n", error_str(err), err);
+        rcode = 1; goto _err;
+    }
+    printf("OK\n");
+
+
+    /**
+     * Print info
      */
     print_dev_status(bar0);
-
 
 _err:
     // unmap bar0
@@ -202,16 +294,6 @@ _err:
     if (fd >= 0)
         close(fd);
 
-    return status;
+    return rcode;
 }
-
-
-
-
-
-
-
-
-
-
 
